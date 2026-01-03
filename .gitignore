@@ -1,0 +1,89 @@
+# =========================
+# Node.js / JavaScript
+# =========================
+node_modules/
+**/node_modules/
+
+package-lock.json
+**/package-lock.json
+
+yarn.lock
+**/yarn.lock
+
+pnpm-lock.yaml
+**/pnpm-lock.yaml
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+**/.env
+**/.env.*
+
+# =========================
+# Build outputs
+# =========================
+dist/
+build/
+.out/
+.next/
+**/dist/
+**/build/
+**/.next/
+**/.out/
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+**/*.log
+
+# =========================
+# Coverage
+# =========================
+coverage/
+**/coverage/
+
+# =========================
+# Cache / temp
+# =========================
+.cache/
+.tmp/
+temp/
+**/.cache/
+**/.tmp/
+**/temp/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Docker
+# =========================
+*.pid
+docker-compose.override.yml
+
+# =========================
+# Misc
+# =========================
+*.tgz
+*.bak
+*.old

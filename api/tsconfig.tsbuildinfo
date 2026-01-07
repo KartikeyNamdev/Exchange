@@ -1,1 +1,1 @@
-{"root":["./src/index.ts"],"version":"5.9.3"}
+{"root":["./src/redismanager.ts","./src/index.ts","./src/types.ts","./src/routes/depth.ts","./src/routes/klines.ts","./src/routes/order.ts","./src/routes/ticker.ts","./src/routes/trades.ts"],"version":"5.9.3"}

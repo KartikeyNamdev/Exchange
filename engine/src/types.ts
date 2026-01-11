@@ -3,7 +3,8 @@ export type messageType =
   | "DELETE_ORDER"
   | "GET_OPEN_ORDERS"
   | "ON_RAMP"
-  | "GET_DEPTH";
+  | "GET_DEPTH"
+  | "CREATE_MARKET";
 export type messageFromApiServer = {
   clientId: string;
   message: {
@@ -42,6 +43,7 @@ export type UserBalance = {
     };
   };
 };
+
 // fill means how much of the order was filled
 export interface Fill {
   otherUserId: string;
@@ -50,3 +52,12 @@ export interface Fill {
   tradeId: number;
   markerOrderId: string;
 }
+
+export type order = {
+  price: number;
+  quantity: number;
+  orderId: string;
+  filled: number;
+  side: "buy" | "sell";
+  userId: string;
+};

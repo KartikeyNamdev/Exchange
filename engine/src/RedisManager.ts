@@ -8,7 +8,9 @@ export class RedisManager {
     this.client = createClient();
     this.client.connect();
   }
-
+  publish(channel: string, message: any) {
+    this.client.publish(channel, JSON.stringify(message));
+  }
   public static getInstance() {
     if (!this.instance) {
       this.instance = new RedisManager();

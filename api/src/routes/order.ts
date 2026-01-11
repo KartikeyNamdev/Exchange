@@ -1,5 +1,6 @@
 import express from "express";
 import { RedisManager } from "../RedisManager.js";
+import { verifyOrder } from "../types.js";
 
 const orderRouter = express.Router();
 
@@ -16,12 +17,11 @@ orderRouter.get("/", async (req, res) => {
 // Order Post route
 orderRouter.post("/", async (req, res) => {
   const { kind, type, price, quantity, market } = req.body;
-  // Validate order data
-  if (!kind || !type || !price || !quantity || !market) {
-    console.log(kind, type, price, quantity, market);
-    return res.status(400).send("Missing order data");
+  const isValid = verifyOrder(req.body);
+  if (!isValid) {
+    return res.status(400).send("Invalid order data");
   }
-  // If verified push to Redis Queue
+
   const response = await RedisManager.getInstance().sendAndAwait({
     type: "CREATE_ORDER",
     data: {
@@ -32,7 +32,6 @@ orderRouter.post("/", async (req, res) => {
       market,
     },
   });
-
   res.json(response);
 });
 export default orderRouter;

@@ -8,10 +8,10 @@ export class RedisManager {
   constructor() {
     this.sender = createClient();
     this.sender.connect();
-    console.log("Sender connected");
     this.receiver = createClient();
     this.receiver.connect();
-    console.log("Receiver connected");
+    console.log("Redis Connected for API SERVER");
+
     // this.instance = this;
   }
 
@@ -24,16 +24,15 @@ export class RedisManager {
 
   public sendAndAwait(message: SendDataToEngine) {
     const id = this.getRandomClientId();
-    // Implementation for sending a message and awaiting a response
-    console.log(id);
-
+    // First push the message to the Redis queue so that the Engine can process it
+    this.receiver.lPush("message", JSON.stringify({ clientId: id, message }));
     return new Promise((resolve) => {
+      // Also subscribe the userId to the response channel to get updates from engine about my order
       this.sender.subscribe(id, (message) => {
-        console.log("Subscribed");
+        console.log("Subscribed to userID : ", id);
         this.sender.unsubscribe(id);
         resolve(JSON.parse(message));
       });
-      this.receiver.lPush("message", JSON.stringify({ clientId: id, message }));
     });
   }
   public getRandomClientId() {

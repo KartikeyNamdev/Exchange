@@ -1,6 +1,11 @@
-import type { orderBooks, order } from "./orderBooks.js";
+import { orderBooks } from "./orderBooks.js";
 import { RedisManager } from "./RedisManager.js";
-import type { Fill, messageFromApiServer, UserBalance } from "./types.js";
+import type {
+  Fill,
+  messageFromApiServer,
+  order,
+  UserBalance,
+} from "./types.js";
 
 export class Engine {
   // SOL_USDC
@@ -21,9 +26,35 @@ export class Engine {
       }
   }
   */
-  constructor() {}
-
+  constructor() {
+    // Initialize SOL_USDC market
+    this.initializeMarket("SOL", "USDC");
+  }
+  initializeMarket(baseAsset: string, quoteAsset: string = "USDC") {
+    const existingMarket = this.orderBooks.find(
+      (book) => book.ticker() === `${baseAsset}_${quoteAsset}`
+    );
+    if (existingMarket) {
+      console.log(`Market ${baseAsset}_${quoteAsset} already exists`);
+      return existingMarket;
+    }
+    const newOrderBook = new orderBooks(
+      baseAsset,
+      quoteAsset,
+      [], // empty bids
+      [], // empty asks
+      0, // lastTradeId
+      100 // currentPrice
+    );
+    this.orderBooks.push(newOrderBook);
+    console.log(`Initialized market: ${baseAsset}_${quoteAsset}`);
+    return newOrderBook;
+  }
+  getMarkets(): string[] {
+    return this.orderBooks.map((book) => book.ticker());
+  }
   process({ clientId, message }: messageFromApiServer) {
+    const RedisClient = new RedisManager();
     const type = message.type;
     switch (type) {
       case "CREATE_ORDER":
@@ -37,6 +68,13 @@ export class Engine {
           market: message.data.market,
         });
 
+        console.log("Engine made an order :", msg);
+        // send any user interested in this userId an update that
+        // how much of his order was filled using PubSub redis
+        RedisClient.publish(
+          clientId,
+          JSON.stringify({ type: "ORDER_UPDATE", data: msg })
+        );
         break;
       case "DELETE_ORDER":
         // Delete an order
@@ -50,6 +88,11 @@ export class Engine {
       case "GET_DEPTH":
         // Get market depth
         break;
+      case "CREATE_MARKET":
+      // Create a new market
+      // const { baseAsset, quoteAsset } = message.data;
+      // this.initializeMarket(baseAsset, quoteAsset);
+      // break;
     }
   }
   createOrder({
@@ -75,10 +118,10 @@ export class Engine {
       return "Order book not found";
     }
     this.checkAndLockUserBalance({
-      side: kind || "",
+      side: kind,
       userId: userId,
-      baseAsset: baseAsset || "",
-      quoteAsset: quoteAsset || "",
+      baseAsset: baseAsset,
+      quoteAsset: quoteAsset,
       quantity: quantity,
       price: price,
     });
@@ -95,6 +138,8 @@ export class Engine {
       userId,
     };
     //add this order to the order book
+    // executedQty is how many of my qty were filled
+    // fills is an array that holds how many of my qty were filled at what price
     const { executedQty, fills } = orderBook.addOrder(order);
     // update both users balance
     this.updateUserBalances({
@@ -105,6 +150,7 @@ export class Engine {
       executedQty,
       fills,
     });
+    return { executedQty, fills };
   }
   checkAndLockUserBalance({
     userId,
@@ -116,38 +162,41 @@ export class Engine {
   }: {
     userId: string;
     side: string;
-    baseAsset: string | undefined; // SOL
-    quoteAsset: string | undefined; // USDC
+    baseAsset: string;
+    quoteAsset: string;
     quantity: number;
     price: number;
   }) {
-    // Check whether user has sufficient balance
     const userBalance = this.balances.get(userId);
-    const requiredBalance = Number(quantity) * Number(price);
-    // ensure the user exist
     if (!userBalance) return "User doesn't exist";
 
     if (side === "buy") {
-      // ensure the user has that asset that he wants to sell
-      if (!userBalance[quoteAsset]?.balance)
+      // Check if user has the quote asset (e.g., USDC to buy SOL)
+      const quoteBalance = userBalance[quoteAsset as keyof UserBalance];
+      if (!quoteBalance?.balance) {
         return `User doesn't have any ${quoteAsset}`;
-      // User has that asset that he wants to buy
-      userBalance[quoteAsset].balance.available =
-        userBalance[quoteAsset].balance.available - requiredBalance;
+      }
 
-      userBalance[quoteAsset].balance.locked =
-        userBalance[quoteAsset].balance.locked + requiredBalance;
+      const requiredBalance = quantity * price;
+      if (quoteBalance.balance.available < requiredBalance) {
+        return `Insufficient ${quoteAsset} balance`;
+      }
+
+      quoteBalance.balance.available -= requiredBalance;
+      quoteBalance.balance.locked += requiredBalance;
     } else {
-      // Sell side: ensure user has enough base asset to sell
-      //@ts-ignore
-      if (!userBalance[baseAsset]?.balance)
+      // Sell side: user needs base asset (e.g., SOL to sell)
+      const baseBalance = userBalance[baseAsset as keyof UserBalance];
+      if (!baseBalance?.balance) {
         return `User doesn't have any ${baseAsset}`;
-      //@ts-ignore
-      userBalance[baseAsset].balance.available =
-        userBalance[baseAsset].balance.available + requiredBalance;
+      }
 
-      userBalance[baseAsset].balance.locked =
-        userBalance[baseAsset].balance.locked - requiredBalance;
+      if (baseBalance.balance.available < quantity) {
+        return `Insufficient ${baseAsset} balance`;
+      }
+
+      baseBalance.balance.available -= quantity; // FIX: subtract, not add
+      baseBalance.balance.locked += quantity; // FIX: add, not subtract
     }
   }
   updateUserBalances({
@@ -163,40 +212,69 @@ export class Engine {
     baseAsset: string;
     quoteAsset: string;
     executedQty: number;
-    //Who they traded with, how much and what price
     fills: Fill[];
   }) {
     if (side === "buy") {
       fills.forEach((fill) => {
-        // userId : Buyer: Me
-        //   quoteAsset: locked  ───▶ decreases by fill.price * fill.qty
-        this.balances.get(userId)[quoteAsset]?.balance.locked -=
-          fill.price * fill.qty;
-        //   baseAsset: available ─▶ increases by fill.qty
-        this.balances.get(userId)[baseAsset]?.balance.available += fill.qty;
-        // otherUserId : Seller: Aditya
-        //   baseAsset: locked ───▶ decreases by fill.qty
-        this.balances.get(fill.otherUserId)[baseAsset]?.balance.locked -=
-          fill.qty;
-        //   quoteAsset: available ─▶ increases by fill.price * fill.qty
-        this.balances.get(fill.otherUserId)[quoteAsset]?.balance.available +=
-          fill.price * fill.qty;
+        const userBalance = this.balances.get(userId);
+        const otherUserBalance = this.balances.get(fill.otherUserId);
+
+        if (!userBalance || !otherUserBalance) return;
+
+        // Buyer (userId):
+        // quoteAsset locked decreases, baseAsset available increases
+        const userBase = (userBalance as any)[baseAsset];
+        const userQuote = (userBalance as any)[quoteAsset];
+
+        if (userBase?.balance) {
+          userBase.balance.available += fill.qty;
+        }
+        if (userQuote?.balance) {
+          userQuote.balance.locked -= fill.price * fill.qty;
+        }
+
+        // Seller (otherUserId):
+        // baseAsset locked decreases, quoteAsset available increases
+        const otherBase = (otherUserBalance as any)[baseAsset];
+        const otherQuote = (otherUserBalance as any)[quoteAsset];
+
+        if (otherBase?.balance) {
+          otherBase.balance.locked -= fill.qty;
+        }
+        if (otherQuote?.balance) {
+          otherQuote.balance.available += fill.price * fill.qty;
+        }
       });
     } else {
       fills.forEach((fill) => {
-        // Seller:
-        // baseAsset: locked ───▶ decreases
-        this.balances.get(userId)[baseAsset]?.balance.locked -= fill.qty;
-        // quoteAsset: available ─▶ increases
-        this.balances.get(userId)[quoteAsset]?.balance.available +=
-          fill.price * fill.qty;
-        // Buyer:
-        // quoteAsset: locked ───▶ decreases
-        this.balances.get(fill.otherUserId)[quoteAsset]?.balance.locked -=
-          fill.price * fill.qty;
-        // baseAsset: available ─▶ increases
-        this.balances.get(fill.otherUserId)[baseAsset]?.balance.available +=
-          fill.qty;
+        const userBalance = this.balances.get(userId);
+        const otherUserBalance = this.balances.get(fill.otherUserId);
+
+        if (!userBalance || !otherUserBalance) return;
+
+        // Seller (userId):
+        // baseAsset locked decreases, quoteAsset available increases
+        const userBase = (userBalance as any)[baseAsset];
+        const userQuote = (userBalance as any)[quoteAsset];
+
+        if (userBase?.balance) {
+          userBase.balance.locked -= fill.qty;
+        }
+        if (userQuote?.balance) {
+          userQuote.balance.available += fill.price * fill.qty;
+        }
+
+        // Buyer (otherUserId):
+        // quoteAsset locked decreases, baseAsset available increases
+        const otherQuote = (otherUserBalance as any)[quoteAsset];
+        const otherBase = (otherUserBalance as any)[baseAsset];
+
+        if (otherQuote?.balance) {
+          otherQuote.balance.locked -= fill.price * fill.qty;
+        }
+        if (otherBase?.balance) {
+          otherBase.balance.available += fill.qty;
+        }
       });
     }
   }

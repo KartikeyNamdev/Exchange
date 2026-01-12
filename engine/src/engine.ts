@@ -30,6 +30,7 @@ export class Engine {
     // Initialize SOL_USDC market
     this.initializeMarket("SOL", "USDC");
   }
+
   initializeMarket(baseAsset: string, quoteAsset: string = "USDC") {
     const existingMarket = this.orderBooks.find(
       (book) => book.ticker() === `${baseAsset}_${quoteAsset}`
@@ -57,6 +58,15 @@ export class Engine {
     const RedisClient = new RedisManager();
     const type = message.type;
     switch (type) {
+      case "GET_OPEN_ORDERS":
+        const openedOrderBook = this.orderBooks.find(
+          (o) => o.ticker() === message.data.market
+        );
+        if (!openedOrderBook) {
+          return {};
+        }
+        const openOrders = openedOrderBook.openOrder(clientId);
+        return openOrders;
       case "CREATE_ORDER":
         // Create an order
         const msg = this.createOrder({
@@ -95,6 +105,7 @@ export class Engine {
       // break;
     }
   }
+
   createOrder({
     kind,
     type,

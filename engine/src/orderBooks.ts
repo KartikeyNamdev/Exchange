@@ -38,6 +38,22 @@ export class orderBooks {
       currentPrice: this.currentPrice,
     };
   }
+  openOrder(clientId: string) {
+    const openedOrders: order[] = [];
+    for (let i = 0; i < this.bids.length; i++) {
+      const bid = this.bids[i];
+      if (bid?.userId === clientId) {
+        openedOrders.push(bid);
+      }
+    }
+    for (let i = 0; i < this.asks.length; i++) {
+      const ask = this.asks[i];
+      if (ask?.userId === clientId) {
+        openedOrders.push(ask);
+      }
+    }
+    return openedOrders;
+  }
 
   addOrder(order: order) {
     if (order.side === "buy") {

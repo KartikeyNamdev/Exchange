@@ -1,12 +1,22 @@
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { RedisManager } from "../RedisManager.js";
 import { verifyOrder } from "../types.js";
 
 const orderRouter = express.Router();
 
-orderRouter.get("/", async (req, res) => {
-  res.send("Order Get route");
+orderRouter.get("/open", async (req: Request, res: Response) => {
+  // get order details
+  const { market, clientId } = req.body;
+  const openOrders = await RedisManager.getInstance().sendAndAwait({
+    type: "GET_OPEN_ORDERS",
+    data: {
+      market: market,
+      clientId: clientId,
+    },
+  });
+  res.json(openOrders);
 });
+
 /*
     kind : buy | sell,
     type : limit | market,
@@ -15,7 +25,7 @@ orderRouter.get("/", async (req, res) => {
     market : SOL-USDC
 */
 // Order Post route
-orderRouter.post("/", async (req, res) => {
+orderRouter.post("/", async (req: Request, res: Response) => {
   const { kind, type, price, quantity, market } = req.body;
   const isValid = verifyOrder(req.body);
   if (!isValid) {

@@ -4,15 +4,20 @@ export class RedisManager {
   private sender: RedisClientType;
   private receiver: RedisClientType;
   private static instance: RedisManager;
+  public stats = {
+    totalRequests: 0,
+    totalLatencyMs: 0,
+    lastLatencyMs: 0,
+    tradesMatched: 0,
+  };
 
   constructor() {
-    this.sender = createClient();
+    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    this.sender = createClient({ url: redisUrl });
     this.sender.connect();
-    this.receiver = createClient();
+    this.receiver = createClient({ url: redisUrl });
     this.receiver.connect();
-    console.log("Redis Connected for API SERVER");
-
-    // this.instance = this;
+    console.log(`Redis Connected to ${redisUrl} for API SERVER`);
   }
 
   public static getInstance() {
@@ -22,16 +27,28 @@ export class RedisManager {
     return this.instance;
   }
 
-  public sendAndAwait(message: SendDataToEngine) {
+  public sendAndAwait(message: SendDataToEngine): Promise<any> {
+    const startTime = Date.now();
     const id = this.getRandomClientId();
     // First push the message to the Redis queue so that the Engine can process it
     this.receiver.lPush("message", JSON.stringify({ clientId: id, message }));
     return new Promise((resolve) => {
       // Also subscribe the userId to the response channel to get updates from engine about my order
-      this.sender.subscribe(id, (message) => {
-        console.log("Subscribed to userID : ", id);
+      this.sender.subscribe(id, (messageStr) => {
+        const endTime = Date.now();
+        const latency = endTime - startTime;
+        this.stats.totalRequests++;
+        this.stats.totalLatencyMs += latency;
+        this.stats.lastLatencyMs = latency;
+
+        console.log("Subscribed to userID : ", id, "Latency:", latency, "ms");
         this.sender.unsubscribe(id);
-        resolve(JSON.parse(message));
+        
+        const parsed = JSON.parse(messageStr);
+        if (parsed && parsed.type === "ORDER_UPDATE" && parsed.data && parsed.data.executedQty > 0) {
+          this.stats.tradesMatched += parsed.data.executedQty;
+        }
+        resolve(parsed);
       });
     });
   }

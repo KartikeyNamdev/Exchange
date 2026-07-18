@@ -1,7 +1,56 @@
 version: "3.8"
+
 services:
   redis:
     image: redis:latest
     container_name: redis_container
     ports:
       - "6379:6379"
+    networks:
+      - exchange-network
+
+  api-server:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: api_server_container
+    ports:
+      - "3000:3000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=3000
+    depends_on:
+      - redis
+    networks:
+      - exchange-network
+
+  matching-engine:
+    build:
+      context: ../engine
+      dockerfile: Dockerfile
+    container_name: matching_engine_container
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - exchange-network
+
+  websocket-server:
+    build:
+      context: ../websocket
+      dockerfile: Dockerfile
+    container_name: websocket_server_container
+    ports:
+      - "3002:3002"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=3002
+    depends_on:
+      - redis
+    networks:
+      - exchange-network
+
+networks:
+  exchange-network:
+    driver: bridge

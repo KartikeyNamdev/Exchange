@@ -99,8 +99,9 @@ export class orderBooks {
       const ask = this.asks[i];
       if (!ask) continue;
 
-      if (ask.price <= order.price && executedQty < order.quantity) {
-        const filledQty = Math.min(order.quantity - executedQty, ask.quantity);
+      const remainingAskQty = ask.quantity - ask.filled;
+      if (ask.price <= order.price && executedQty < order.quantity && remainingAskQty > 0) {
+        const filledQty = Math.min(order.quantity - executedQty, remainingAskQty);
         executedQty += filledQty;
         ask.filled += filledQty;
 
@@ -121,7 +122,7 @@ export class orderBooks {
       const ask = this.asks[i];
       if (!ask) continue;
 
-      if (ask.filled === ask.quantity) {
+      if (ask.filled >= ask.quantity) {
         this.asks.splice(i, 1);
         i--;
       }
@@ -138,10 +139,11 @@ export class orderBooks {
       const bid = this.bids[i];
       if (!bid) continue;
 
-      if (bid.price >= order.price && executedQty < order.quantity) {
+      const remainingBidQty = bid.quantity - bid.filled;
+      if (bid.price >= order.price && executedQty < order.quantity && remainingBidQty > 0) {
         const amountRemaining = Math.min(
           order.quantity - executedQty,
-          bid.quantity
+          remainingBidQty
         );
         executedQty += amountRemaining;
         bid.filled += amountRemaining;
@@ -163,7 +165,7 @@ export class orderBooks {
       const bid = this.bids[i];
       if (!bid) continue;
 
-      if (bid.filled === bid.quantity) {
+      if (bid.filled >= bid.quantity) {
         this.bids.splice(i, 1);
         i--;
       }

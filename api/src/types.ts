@@ -6,6 +6,8 @@ export type SendDataToEngine = {
     price: number;
     quantity: number;
     market: string;
+    userId?: string;
+    clientId?: string;
   };
 };
 export type recieveDataFromEngine = {

@@ -5,7 +5,8 @@ export class RedisManager {
   private static instance: RedisManager;
 
   constructor() {
-    this.client = createClient();
+    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    this.client = createClient({ url: redisUrl });
     this.client.connect();
   }
   publish(channel: string, message: any) {

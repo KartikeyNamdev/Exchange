@@ -29,6 +29,15 @@ export class Engine {
   constructor() {
     // Initialize SOL_USDC market
     this.initializeMarket("SOL", "USDC");
+    // Add default user balances for testing
+    this.balances.set("user1", {
+      SOL: { balance: { available: 1000, locked: 0 } },
+      USDC: { balance: { available: 100000, locked: 0 } }
+    });
+    this.balances.set("user2", {
+      SOL: { balance: { available: 1000, locked: 0 } },
+      USDC: { balance: { available: 100000, locked: 0 } }
+    });
   }
 
   initializeMarket(baseAsset: string, quoteAsset: string = "USDC") {
@@ -58,19 +67,22 @@ export class Engine {
     const RedisClient = new RedisManager();
     const type = message.type;
     switch (type) {
-      case "GET_OPEN_ORDERS":
+      case "GET_OPEN_ORDERS": {
         const openedOrderBook = this.orderBooks.find(
           (o) => o.ticker() === message.data.market
         );
         if (!openedOrderBook) {
-          return {};
+          RedisClient.publish(clientId, []);
+          break;
         }
-        const openOrders = openedOrderBook.openOrder(clientId);
-        return openOrders;
-      case "CREATE_ORDER":
+        const openOrders = openedOrderBook.openOrder((message.data as any).clientId || "user1");
+        RedisClient.publish(clientId, openOrders);
+        break;
+      }
+      case "CREATE_ORDER": {
         // Create an order
         const msg = this.createOrder({
-          userId: clientId,
+          userId: (message.data as any).userId || "user1",
           kind: message.data.kind,
           type: message.data.type,
           price: message.data.price,
@@ -79,30 +91,65 @@ export class Engine {
         });
 
         console.log("Engine made an order :", msg);
-        // send any user interested in this userId an update that
-        // how much of his order was filled using PubSub redis
+        // send client response using PubSub redis
         RedisClient.publish(
           clientId,
-          JSON.stringify({ type: "ORDER_UPDATE", data: msg })
+          { type: "ORDER_UPDATE", data: msg }
         );
         break;
+      }
       case "DELETE_ORDER":
-        // Delete an order
+        RedisClient.publish(clientId, { status: "success" });
         break;
-      case "GET_OPEN_ORDERS":
-        // Get open orders
+      case "ON_RAMP": {
+        const { userId: rampUser, amount: rampAmount, asset: rampAsset } = message.data as any;
+        let uBalance = this.balances.get(rampUser);
+        if (!uBalance) {
+          uBalance = {
+            [rampAsset]: { balance: { available: 0, locked: 0 } }
+          };
+          this.balances.set(rampUser, uBalance);
+        }
+        if (!uBalance[rampAsset]) {
+          uBalance[rampAsset] = { balance: { available: 0, locked: 0 } };
+        }
+        uBalance[rampAsset].balance.available += Number(rampAmount);
+        RedisClient.publish(clientId, { status: "success", balance: uBalance[rampAsset].balance });
         break;
-      case "ON_RAMP":
-        // Handle on-ramp
+      }
+      case "GET_DEPTH": {
+        const depthOrderBook = this.orderBooks.find(
+          (o) => o.ticker() === message.data.market
+        );
+        if (!depthOrderBook) {
+          RedisClient.publish(clientId, { bids: [], asks: [] });
+          break;
+        }
+        const snapshot = depthOrderBook.getSnapshot();
+        const bidsMap = new Map<number, number>();
+        const asksMap = new Map<number, number>();
+        snapshot.bids.forEach(o => {
+          const remaining = o.quantity - o.filled;
+          if (remaining > 0) {
+            bidsMap.set(o.price, (bidsMap.get(o.price) || 0) + remaining);
+          }
+        });
+        snapshot.asks.forEach(o => {
+          const remaining = o.quantity - o.filled;
+          if (remaining > 0) {
+            asksMap.set(o.price, (asksMap.get(o.price) || 0) + remaining);
+          }
+        });
+        const bids = Array.from(bidsMap.entries()).sort((a, b) => b[0] - a[0]);
+        const asks = Array.from(asksMap.entries()).sort((a, b) => a[0] - b[0]);
+        RedisClient.publish(clientId, { bids, asks });
         break;
-      case "GET_DEPTH":
-        // Get market depth
-        break;
+      }
       case "CREATE_MARKET":
-      // Create a new market
-      // const { baseAsset, quoteAsset } = message.data;
-      // this.initializeMarket(baseAsset, quoteAsset);
-      // break;
+        // Create a new market
+        // const { baseAsset, quoteAsset } = message.data;
+        // this.initializeMarket(baseAsset, quoteAsset);
+        // break;
     }
   }
 
@@ -123,12 +170,12 @@ export class Engine {
   }) {
     const baseAsset = market?.split("_")[0];
     const quoteAsset = market?.split("_")[1];
-    if (!baseAsset || !quoteAsset) return "Invalid market";
+    if (!baseAsset || !quoteAsset) return { error: "Invalid market" };
     const orderBook = this.orderBooks.find((book) => book.ticker() === market);
     if (!orderBook) {
-      return "Order book not found";
+      return { error: "Order book not found" };
     }
-    this.checkAndLockUserBalance({
+    const lockError = this.checkAndLockUserBalance({
       side: kind,
       userId: userId,
       baseAsset: baseAsset,
@@ -136,6 +183,10 @@ export class Engine {
       quantity: quantity,
       price: price,
     });
+    if (lockError) {
+      console.log("Failed to lock user funds:", lockError);
+      return { error: lockError };
+    }
     console.log("Locked Users's funds");
 
     const order: order = {
@@ -161,6 +212,32 @@ export class Engine {
       executedQty,
       fills,
     });
+
+    // Publish global updates for WebSockets
+    const snapshot = orderBook.getSnapshot();
+    const bidsMap = new Map<number, number>();
+    const asksMap = new Map<number, number>();
+    snapshot.bids.forEach(o => {
+      const remaining = o.quantity - o.filled;
+      if (remaining > 0) {
+        bidsMap.set(o.price, (bidsMap.get(o.price) || 0) + remaining);
+      }
+    });
+    snapshot.asks.forEach(o => {
+      const remaining = o.quantity - o.filled;
+      if (remaining > 0) {
+        asksMap.set(o.price, (asksMap.get(o.price) || 0) + remaining);
+      }
+    });
+    const bids = Array.from(bidsMap.entries()).sort((a, b) => b[0] - a[0]);
+    const asks = Array.from(asksMap.entries()).sort((a, b) => a[0] - b[0]);
+    
+    RedisManager.getInstance().publish(`depth@${market}`, { bids, asks });
+
+    if (fills && fills.length > 0) {
+      RedisManager.getInstance().publish(`trades@${market}`, fills);
+    }
+
     return { executedQty, fills };
   }
   checkAndLockUserBalance({
@@ -206,9 +283,10 @@ export class Engine {
         return `Insufficient ${baseAsset} balance`;
       }
 
-      baseBalance.balance.available -= quantity; // FIX: subtract, not add
-      baseBalance.balance.locked += quantity; // FIX: add, not subtract
+      baseBalance.balance.available -= quantity;
+      baseBalance.balance.locked += quantity;
     }
+    return null;
   }
   updateUserBalances({
     userId,
